@@ -2,13 +2,14 @@ from pyrosm import OSM, get_data
 from uszipcode import SearchEngine
 from math import sqrt
 
+yearDat = "2018"  # year to fetch income data from. max for uszipcode is 2018.
 city = "tennessee"
 zipCodes = ["37201"]  # manually make this list containing all zipcodes of the chosen city
 zipCodes.extend([str(p) for p in range(37203, 37222)])
 simpleZipQuery = SearchEngine()
 comprehensiveZipQuery = SearchEngine(SearchEngine.SimpleOrComprehensiveArgEnum.comprehensive)
 
-variables = ["median_household_income", "median_home_value", "housing_units", "households_with_kids", "population", "travel_time_to_work_in_minutes"]
+variables = ["mean_household_income", "median_home_value", "housing_units", "households_with_kids", "population", "travel_time_to_work_in_minutes"]
 variablesData = []
 # remove all unknown household income data
 for var in variables:
@@ -17,11 +18,12 @@ for var in variables:
     for zci in range(len(zipCodes)):
         simpleZipObj = simpleZipQuery.by_zipcode(zipCodes[zci])
         comprehensiveZipObj = comprehensiveZipQuery.by_zipcode(zipCodes[zci])
-        if var == "median_household_income":
-            if simpleZipObj.median_household_income is not None:
-                variablesData[-1].append(simpleZipObj.median_household_income)
-            else:
-                popList.append(zci)
+        if var == "mean_household_income":  # different to median household income. shows weak positive correlation instead.
+            meanHouseholdIncome = comprehensiveZipObj.average_household_income_over_time[0]["values"]
+            for mhi in meanHouseholdIncome:
+                if mhi['x'] == int(yearDat):
+                    variablesData[-1].append(mhi['y'])
+                    break
         elif var == "median_home_value":
             if simpleZipObj.median_home_value is not None:
                 variablesData[-1].append(simpleZipObj.median_home_value)
@@ -52,7 +54,6 @@ for var in variables:
         zipCodes.pop(p)
 
 roadDensity = [0 for _ in zipCodes]
-boundNames = []
 zipBounds = [simpleZipQuery.by_zipcode(zc).bounds for zc in zipCodes]  # westmost, eastmost, northmost, southmost points of each zipcode area
 cityBounds = [min(b["west"] for b in zipBounds), min(b["south"] for b in zipBounds), max(b["east"] for b in zipBounds), max(b["north"] for b in zipBounds)]
 
@@ -64,9 +65,16 @@ for road in roadData:
     roadPoints.extend(list(c.coords)[1] for c in list(road.geoms))
     roadPoints = list(dict.fromkeys(roadPoints))  # remove all duplicate points on every road
 
-    # if any road point is inside any zipcode's area, add 1 to that zipcode's area
+    """
+    POTENTIAL (but extremely unlikely) DATA INACCURACY:
+    roads are assumed to NOT be perfectly straight lines for kilometers on end, so that at least one point on a road passing through multiple zip code regions are considered to be inside them all.
+    even if some roads are perfectly straight for many kilometers, there are an insignificant amount that intersect through multiple zip code regions without endpoints in either region.
+    this greatly alleviates processing power as line-line intersections do not have to be calculated.
+    additionally, this prevents potential floating point error from performing arithmetic operations on such large floats.
+    """
     for zbi in range(len(zipBounds)):
         for rp in roadPoints:
+            # if any road point is inside any zipcode's area, add 1 to that zipcode's area
             if (zipBounds[zbi]["west"] <= rp[0] <= zipBounds[zbi]["east"]) and (zipBounds[zbi]["south"] <= rp[1] <= zipBounds[zbi]["north"]):
                 roadDensity[zbi] += 1
                 continue
@@ -83,4 +91,5 @@ for varI in range(len(variablesData)):
     avgHouseholdIncome = sum(variablesData[varI]) / len(variablesData[varI])
     avgPostalRoads = sum(roadDensity) / len(roadDensity)
     PCC[variables[varI]] = sum((variablesData[varI][i] - avgHouseholdIncome) * (roadDensity[i] - avgPostalRoads) for i in range(len(variablesData[varI]))) / sqrt(sum((variablesData[varI][i] - avgHouseholdIncome) ** 2 for i in range(len(variablesData[varI]))) * sum((roadDensity[i] - avgPostalRoads) ** 2 for i in range(len(variablesData[varI]))))
-print(PCC)
+for k in PCC.keys():
+    print(f"{k.replace('_', ' ').capitalize()}: {PCC[k]}")
